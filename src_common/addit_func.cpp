@@ -2,13 +2,13 @@
 
 using namespace Addit_func;
 
-double Addit_func :: cpuTime(void) { 
+double Addit_func :: cpu_time(void) { 
 	return (double)clock() / CLOCKS_PER_SEC;
 }
 
-int Addit_func :: strtoint( string str )
+int Addit_func :: strtoint( std::string str )
 {
-	stringstream sstream;
+	std::stringstream sstream;
 	sstream << str;
 	int val;
 	sstream >> val;
@@ -61,11 +61,11 @@ int Addit_func :: ConseqMultip( int low_bound, int high_bound )
 	return final_val;
 }
 
-void Addit_func :: MakeCombinations( int n, int k, vector< vector<int> > &combinations )
+void Addit_func :: MakeCombinations( int n, int k, std::vector< std::vector<int> > &combinations )
 {
 // Generation of set of all k-combinations of a set n
 	int val;
-	vector<int> index_arr;
+	std::vector<int> index_arr;
 	index_arr.resize(k);
 	unsigned comb_index = 0;
 	combinations.resize( ConseqMultip(n-k+1,n) / ConseqMultip(1, k) );
@@ -95,10 +95,10 @@ void Addit_func :: MakeCombinations( int n, int k, vector< vector<int> > &combin
 	index_arr.resize(0);
 }
 
-void Addit_func :: MakePermutations( int n, int k, vector< vector<int> > &permutations )
+void Addit_func :: MakePermutations( int n, int k, std::vector< std::vector<int> > &permutations )
 {
-	vector< vector<int> > combinations;
-	vector<int> cur_permutation;
+	std::vector< std::vector<int> > combinations;
+	std::vector<int> cur_permutation;
 	permutations.reserve( ConseqMultip(n-k+1,n) ); // reserve count of permutations
 	MakeCombinations(n,k,combinations);
 	for( unsigned i=0; i<combinations.size(); ++i ){
@@ -108,18 +108,21 @@ void Addit_func :: MakePermutations( int n, int k, vector< vector<int> > &permut
 	}
 }
 
-int Addit_func :: getdir( string dir, vector<string> &files )
+bool Addit_func :: getdir( std::string dir, std::vector<std::string> &files )
 {
     DIR *dp;
+	std::string cur_name;
     struct dirent *dirp;
     if((dp  = opendir(dir.c_str())) == NULL) {
-        std::cout << std::endl << "Error in opening " << dir;
-        return 1;
+        std::cout << std::endl << "Error in opening " << dir << std::endl;
+        return false;
     }
-    while ((dirp = readdir(dp)) != NULL) 
-	{ files.push_back(string(dirp->d_name)); }
+    while ((dirp = readdir(dp)) != NULL) { 
+		cur_name = std::string(dirp->d_name);
+		if ( cur_name[0] != '.' ) files.push_back(cur_name); 
+	}
     closedir(dp);
-    return 0;
+    return true;
 }
 
 /*
@@ -196,4 +199,34 @@ extern unsigned Addit_func :: uint_rand( boost::random::mt19937 &gen ) {
 extern bool Addit_func :: bool_rand( boost::random::mt19937 &gen ) {
 	static boost::random::uniform_int_distribution<uint32_t> dist(0,1);
 	return ( dist(gen) == 0 );
+}
+
+// ececute command via system process
+extern std::string Addit_func :: exec( std::string cmd_str ) {
+	std::string result = "";
+#ifndef _BOINC
+	char* cmd = new char[cmd_str.size() + 1];
+	for( unsigned i=0; i < cmd_str.size(); i++ )
+		cmd[i] = cmd_str[i];
+	//strcpy( cmd, cmd_str.c_str() );
+	cmd[cmd_str.size()] = '\0';
+#ifdef _WIN32
+    FILE* pipe = _popen(cmd, "r");
+#else
+	FILE* pipe = popen(cmd, "r");
+#endif
+	delete[] cmd;
+    if (!pipe) return "ERROR";
+    char buffer[128];
+    while(!feof(pipe)) {
+    	if(fgets(buffer, 128, pipe) != NULL)
+    		result += buffer;
+    }
+#ifdef _WIN32
+    _pclose(pipe);
+#else
+	pclose(pipe);
+#endif
+#endif
+    return result;
 }

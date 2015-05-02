@@ -1,10 +1,10 @@
 // +---------------------------------------------------------------------------+
-// | PD-SAT: Parallel Distributed SAT                                          }
+// | PDSAT: Parallel and Distributed SAT solver                                |
 // | MPI-realization of packet D-SAT for SAT-problem solving                   |                         
 // +---------------------------------------------------------------------------+
-// | Institute of System Dynamics and Control Theory SB RAS                    |   
+// | Institute for System Dynamics and Control Theory SB RAS                   |   
 // +---------------------------------------------------------------------------+
-// | Author: Zaikin Oleg <oleg.zaikin@icc.ru>                                  |
+// | Author: Oleg Zaikin <zaikin.icc@gmail.com>                                |
 // +---------------------------------------------------------------------------+
 
 #include "mpi_base.h"
@@ -13,10 +13,10 @@
 
 struct Flags
 {
-	int solver_type;
+	std::string solver_name;
 	int sort_type;
 	int koef_val;
-	string schema_type; 
+	std::string schema_type; 
 	int predict_from; 	
 	int predict_to;
 	int proc_count; 
@@ -45,22 +45,20 @@ struct Flags
 	double max_solving_time;
 	int max_nof_restarts;
 	int skip_tasks;
-	string rslos_table_name;
-	string evaluation_type;
+	std::string rslos_table_name;
+	std::string evaluation_type;
 	double max_solving_time_koef;
 	bool no_increm;
 	double te; // for (ro es te) predict strategy
-	double er;
-	double penalty;
-	int er_strategy;
-	double exp_denom;
+	//double penalty;
+	unsigned blob_var_count;
 };
 
 // prototypes
 //---------------------------------------------------------
 bool GetInputFlags( int &argc, char **&argv, Flags &myflags );
 const char* hasPrefix( const char* str, const char* prefix );
-string hasPrefix_String( string str, string prefix );
+std::string hasPrefix_String( std::string str, std::string prefix );
 void WriteUsage( );
 void TestPredict( );
 void TestDeepPredict( );
@@ -72,7 +70,7 @@ int main( int argc, char** argv )
 // main procedure
 	int full_mask_var_count;
 	char *input_cnf_name;
-
+	
 #ifdef _DEBUG
 	//TestSolve( );
 	TestDeepPredict( );
@@ -84,25 +82,27 @@ int main( int argc, char** argv )
 	Flags myflags;
 
 	// check input flags -solver -sort -koef -schema -predict -predict_from -predict_to
-	if ( !GetInputFlags( argc, argv, myflags ) )
-	{ printf( "\n Error in GetInputFlags" ); WriteUsage( ); return 1; }
+	if ( !GetInputFlags( argc, argv, myflags ) ) { 
+		printf( "\n Error in GetInputFlags" ); 
+		WriteUsage( ); 
+		return 1; 
+	}
 	
 	if ( myflags.IsConseq ) {
 		MPI_Solver mpi_s;
-		if ( myflags.solver_type != -1 )
-			mpi_s.solver_type = myflags.solver_type;
+		mpi_s.solver_name = myflags.solver_name;
 		if ( myflags.core_len != -1 )
 			mpi_s.core_len = myflags.core_len;
 		mpi_s.verbosity = myflags.verbosity;
 		mpi_s.MPI_ConseqSolve( argc, argv );
-		cout << endl << "Correct end of MPI_ConseqSolve";
+		std::cout << std::endl << "Correct end of MPI_ConseqSolve";
 		return 0;
 	}
 
 	if ( !(myflags.IsConseq) ) {
 		// check count of input parameters
 		if ( argc < 2 ) {
-			std :: cout << "\n argc must be >= 2" << endl;
+			std::cout << "\n argc must be >= 2" << std::endl;
 			WriteUsage( );
 			return 1;
 		}
@@ -112,9 +112,7 @@ int main( int argc, char** argv )
 	if ( myflags.IsPredict ) {
 		MPI_Predicter mpi_p;
 		mpi_p.input_cnf_name          = input_cnf_name; // for C dminisat
-		
-		if ( myflags.solver_type != -1 )
-			mpi_p.solver_type         = myflags.solver_type;
+		mpi_p.solver_name             = myflags.solver_name;
 		if ( myflags.koef_val != -1 )
 			mpi_p.koef_val            = myflags.koef_val;
 		if ( myflags.schema_type != "" )
@@ -151,18 +149,14 @@ int main( int argc, char** argv )
 			mpi_p.max_solving_time = myflags.max_solving_time;
 		if ( myflags.evaluation_type != "" )
 			mpi_p.evaluation_type = myflags.evaluation_type;
-		if ( myflags.er_strategy != -1 )
-			mpi_p.ts_strategy = myflags.er_strategy;
-		if ( myflags.exp_denom != 0.0 )
-			mpi_p.exp_denom = myflags.exp_denom;
 		mpi_p.IsFirstStage = myflags.IsFirstStage;
 		if ( myflags.te > 0 )
 			mpi_p.te = myflags.te;
-		if ( myflags.er > 0 )
-			mpi_p.er = myflags.er;
-		if ( myflags.penalty > 0 )
-			mpi_p.penalty = myflags.penalty;
-
+		//if ( myflags.penalty > 0 )
+		//	mpi_p.penalty = myflags.penalty;
+		if ( myflags.blob_var_count )
+			mpi_p.blob_var_count = myflags.blob_var_count;
+		
 		// Predict compute cost
 		if ( !mpi_p.MPI_Predict( argc, argv ) ) {
 			printf( "\n Error in MPI_Predict" );
@@ -188,8 +182,8 @@ int main( int argc, char** argv )
 		if ( full_mask_var_count != -1 )
 			mpi_s.full_mask_var_count = (unsigned)full_mask_var_count;
 
-		if ( myflags.solver_type != -1 )
-			mpi_s.solver_type = myflags.solver_type;
+		if ( myflags.solver_name != "" )
+			mpi_s.solver_name = myflags.solver_name;
 		if ( myflags.koef_val != -1 )
 			mpi_s.koef_val    = myflags.koef_val;
 		if ( myflags.schema_type != "" )
@@ -235,11 +229,9 @@ void WriteUsage( )
 	std :: cout << 
 	"\n USAGE: pdsat [options] <input_cnf> <split_var_count>"
 	"\n options::"
-	"\n   -solver = { dm, m2_orig, m2_mod }, -s = -solver"
-	"\n	    dm		     - mod of minisat 1.14 for (9+11+11) schema,"
-	"\n	    m2_orig		 - origignal minisat 2.0"
-	"\n		m2_mod		 - modified minisat 2.0 on C++ (by constants changing)"
-	"\n		m2.2		 - minisat 2.2"
+	"\n   -solver = { minisat, minigolf }, -s = -solver"
+	"\n		minisat - minisat 2.2"
+	"\n		minigolf - hack of minisat 2.2 from SAT 2013"
 	"\n   -sort = { 0, 1, 2 }"
 	"\n	    0			 - no sort,"
 	"\n	    1			 - only sort of tasks,"
@@ -292,13 +284,14 @@ void WriteUsage( )
 	"\n   -no_increm - disable incremental mode while solving";
 	"\n   -te - for (ro, es, te) strategy in predict";
 	"\n   -er - power of median for (ro, es, te) strategy in predict";
-	"\n   -penalty - penalty for function in satisfiably predict mode";
+	//"\n   -penalty - penalty for function in satisfiably predict mode";
 	"\n   -er_strategy - strategy for SAT predict";
 	"\n   -exp_denom - exponent for denominant in predict function computing";
+	"\n   -blob_var_count - max var count in decomposition set for writing blob (state of SAT solver)";
 }
 
 //---------------------------------------------------------
-bool hasPrefix_String( string str, string prefix, string &value )
+bool hasPrefix_String( std::string str, std::string prefix, std::string &value )
 {
 	int found = str.find( prefix );
 	if ( found != -1 ) {
@@ -314,11 +307,10 @@ bool GetInputFlags( int &argc, char **&argv, Flags &myflags )
 // Get input keys if such exists 
 	int i, k;
 	bool IsSchemaFixed = false;
-	stringstream sstream;
-	string argv_string,
-		   value;
+	std::stringstream sstream;
+	std::string argv_string, value;
 	// default values
-	myflags.solver_type			= -1;
+	myflags.solver_name		    = "";
 	myflags.koef_val			= -1,
 	myflags.schema_type			= "";
 	myflags.poly_mod			= -1;
@@ -355,10 +347,8 @@ bool GetInputFlags( int &argc, char **&argv, Flags &myflags )
 	myflags.max_solving_time_koef = 0;
 	myflags.no_increm = false;
 	myflags.te = 0;
-	myflags.er = 0;
-	myflags.penalty = 0;
-	myflags.er_strategy = -1;
-	myflags.exp_denom = 0.0;
+	//myflags.penalty = 0;
+	myflags.blob_var_count = 0;
 	
 	k = 0;
 	
@@ -373,21 +363,21 @@ bool GetInputFlags( int &argc, char **&argv, Flags &myflags )
 		{
 			myflags.predict_from = atoi( value.c_str( ) );
 			if ( myflags.predict_from < 0 )
-			{ cout << "Error. predict_from is negative"; return false; }
+			{ std::cerr << "Error. predict_from is negative"; return false; }
 		}
 		else if ( ( hasPrefix_String( argv_string, "-to=",          value ) ) ||
 		          ( hasPrefix_String( argv_string, "-predict_to=",  value ) ) )
 		{
 			myflags.predict_to = atoi( value.c_str( ) );
 			if ( myflags.predict_to < 1 )
-			{ cout << "Error. predict_to < 1 "; return false; }
+			{ std::cerr << "Error. predict_to < 1 "; return false; }
 		}
 		else if ( ( hasPrefix_String( argv_string, "-proc=",        value ) ) ||
 			      ( hasPrefix_String( argv_string, "-proc_count=",  value ) ) )
 		{
 			myflags.proc_count = atoi( value.c_str( ) );
 			if ( myflags.proc_count < 1 )
-			{ cout << "Error. proc_count is negative"; return false; }
+			{ std::cerr << "Error. proc_count is negative"; return false; }
 		}
 		else if ( ( hasPrefix_String( argv_string, "-rslos_table=",      value ) ) ||
 				  ( hasPrefix_String( argv_string, "-rslos_table_name=", value ) ) )
@@ -404,22 +394,18 @@ bool GetInputFlags( int &argc, char **&argv, Flags &myflags )
 			myflags.max_L2_hamming_distance = atoi( value.c_str( ) );
 		else if ( hasPrefix_String( argv_string, "-skip_tasks=", value ) )
 			myflags.skip_tasks = atoi( value.c_str() );
-		else if ( hasPrefix_String( argv_string, "-er_strategy=", value ) )
-			myflags.er_strategy = atoi( value.c_str() );
 		else if ( hasPrefix_String( argv_string, "-max_nof_restarts=", value ) )
 			myflags.max_nof_restarts = atoi( value.c_str( ) );
+		else if ( hasPrefix_String( argv_string, "-blob_var_count=", value ) )
+			myflags.blob_var_count = atoi( value.c_str( ) );
 		else if ( hasPrefix_String( argv_string, "-max_solving_time=", value ) )
 			myflags.max_solving_time = atof( value.c_str( ) );
 		else if ( hasPrefix_String( argv_string, "-max_solving_time_koef=", value ) )
 			myflags.max_solving_time_koef = atof( value.c_str( ) );
 		else if ( hasPrefix_String( argv_string, "-te=", value ) )
 			myflags.te = atof( value.c_str( ) );
-		else if ( hasPrefix_String( argv_string, "-er=", value ) )
-			myflags.er = atof( value.c_str( ) );
-		else if ( hasPrefix_String( argv_string, "-exp_denom=", value ) )
-			myflags.exp_denom = atof( value.c_str( ) );
-		else if ( hasPrefix_String( argv_string, "-penalty=", value ) )
-			myflags.penalty = atof( value.c_str( ) );
+		//else if ( hasPrefix_String( argv_string, "-penalty=", value ) )
+		//	myflags.penalty = atof( value.c_str( ) );
 		else if ( hasPrefix_String( argv_string, "-deep_predict=", value ) )  {
 			myflags.deep_predict = atoi( value.c_str( ) );
 			switch ( myflags.deep_predict ) {
@@ -442,7 +428,7 @@ bool GetInputFlags( int &argc, char **&argv, Flags &myflags )
 					myflags.max_var_deep_predict = 1; // Hamming distance == 2
 					break;
 				default :
-					cout << "***Warning. Incorrect myflags.deep_predict";
+					std::cout << "***Warning. Incorrect myflags.deep_predict";
 					myflags.max_var_deep_predict = 2;
 					break;
 			}
@@ -450,23 +436,13 @@ bool GetInputFlags( int &argc, char **&argv, Flags &myflags )
 		else if ( ( hasPrefix_String( argv_string, "-solver=",      value ) ) || 
 				  ( hasPrefix_String( argv_string, "-s=",           value ) ) )
 		{
-			if ( ( value == "dm"       ) || 
-				 ( value == "dminisat" ) )
-			{
-				myflags.solver_type = 1;
-				if ( !IsSchemaFixed ) // if no key -schema
-					myflags.schema_type = "0"; // default schema is first variables
-			}
-			else if ( value == "m2.2" )
-				myflags.solver_type = 4;
-			else
-                cout << "ERROR! unknown solver " << value;
+			myflags.solver_name = value;
 		}
-		else if ( hasPrefix_String( argv_string, "-koef=",       value ) ) {
+		else if ( hasPrefix_String( argv_string, "-koef=", value ) ) {
 			myflags.koef_val = atoi( value.c_str( ) );
 			if ( myflags.koef_val < 1 ) {
 				myflags.koef_val = 1;
-				cout << "koef_val was changed to 1";
+				std::cout << "koef_val was changed to 1";
 			}
 		}
 		else if ( ( hasPrefix_String( argv_string, "-core=",     value ) ) ||
@@ -475,11 +451,11 @@ bool GetInputFlags( int &argc, char **&argv, Flags &myflags )
 			myflags.core_len = atoi( value.c_str( ) );
 			if ( myflags.core_len < 0 ) {
 				myflags.core_len = 0;
-				cout << "Error. core_len < 0, changed to 0";
+				std::cerr << "Error. core_len < 0, changed to 0";
 			}
 			if ( myflags.core_len > MAX_CORE_LEN ) { // check < MAX_CORE_LEN
 				myflags.core_len = MAX_CORE_LEN;
-				cout << "Error. core_len > MAX_CORE_LEN, changed to MAX_CORE_LEN";
+				std::cerr << "Error. core_len > MAX_CORE_LEN, changed to MAX_CORE_LEN";
 			}
 		}
 		else if ( ( hasPrefix_String( argv_string, "-cnf_in_set=",       value ) ) ||
@@ -488,11 +464,11 @@ bool GetInputFlags( int &argc, char **&argv, Flags &myflags )
 			myflags.cnf_in_set_count = atoi( value.c_str( ) );
 			if ( myflags.cnf_in_set_count < 0 ) {
 				myflags.cnf_in_set_count = 64;
-				cout << "cnf_in_set_count was changed to " << myflags.cnf_in_set_count;
+				std::cout << "cnf_in_set_count was changed to " << myflags.cnf_in_set_count;
 			}
 			if ( myflags.cnf_in_set_count > ( 1 << MAX_STEP_CNF_IN_SET ) ) {
 				myflags.cnf_in_set_count = ( 1 << MAX_STEP_CNF_IN_SET );
-				cout << "cnf_in_set_count was changed to " << myflags.cnf_in_set_count;
+				std::cout << "cnf_in_set_count was changed to " << myflags.cnf_in_set_count;
 			}
 		}
 		else if ( hasPrefix_String( argv_string, "-schema=",              value ) ) {
@@ -535,12 +511,12 @@ bool GetInputFlags( int &argc, char **&argv, Flags &myflags )
 				  ( argv_string == "--help" ) )
 			WriteUsage( );
 		else if ( argv_string[0] == '-' )
-            cout << "ERROR! unknown flag " << argv_string;
+            std::cerr << "ERROR! unknown flag " << argv_string;
 		else
             argv[k++] = argv[i]; // skip flag arguments
     }
     argc = k;
-
+	
 	// if all keys needed for predicting exists then start predicting
 	if ( ( myflags.predict_to > 0 ) || 
 		 ( myflags.deep_predict > 0 ) ||
@@ -548,14 +524,16 @@ bool GetInputFlags( int &argc, char **&argv, Flags &myflags )
 	   )
 	{
 		myflags.IsPredict = true;
-		/*cout << "myflags.IsPredict " << myflags.IsPredict << endl;
-		cout << "myflags.start_temperature_koef " << myflags.start_temperature_koef << endl;
-		cout << "myflags.point_admission_koef " << myflags.point_admission_koef << endl;
-		cout << endl;*/
+		/*cout << "myflags.IsPredict " << myflags.IsPredict << std::endl;
+		cout << "myflags.start_temperature_koef " << myflags.start_temperature_koef << std::endl;
+		cout << "myflags.point_admission_koef " << myflags.point_admission_koef << std::endl;
+		cout << std::endl;*/
 		if ( ( myflags.predict_to > MAX_CORE_LEN ) || ( myflags.predict_from > myflags.predict_to ) )
 		{
-			std :: cout << "\n Error. predict_from < 0 || predict_to > MAX_REDICT_TO ||" 
-						<< " predict_from > predict_to" << endl;
+			std::cerr << "\n Error. predict_to > MAX_CORE_LEN || predict_from > predict_to" << std::endl;
+			std::cerr << "myflags.predict_from " << myflags.predict_from << std::endl;
+			std::cerr << "myflags.predict_to " << myflags.predict_to << std::endl;
+			std::cerr << "MAX_CORE_LEN " << MAX_CORE_LEN << std::endl;
 			return false;
 		}
 	}
@@ -576,7 +554,7 @@ void TestSolve()
 	Solver S;
 
 	char *input_cnf_name = "../src_common/tresh72_0.cnf";	
-	string rslos_table_name = "../src_common/bits_4_1/1010.txt";
+	std::string rslos_table_name = "../src_common/bits_4_1/1010.txt";
 	int process_sat_count = 0;
 	unsigned int full_mask[FULL_MASK_LEN];
 	unsigned int part_mask[FULL_MASK_LEN];
@@ -584,7 +562,7 @@ void TestSolve()
 	MPI_Solver mpi_s;
 	mpi_s.input_cnf_name = input_cnf_name;
 	//mpi_s.schema_type = "rslos_end";
-	mpi_s.solver_type = 4;
+	mpi_s.solver_name = "minisat";
 	mpi_s.ReadIntCNF();
 	mpi_s.MakeVarChoose();
 	int current_task_index = 0;
@@ -598,7 +576,6 @@ void TestSolve()
 	mpi_s.all_tasks_count = 16;
 	//mpi_s.verbosity = 2;
 	//mpi_s.SolverRun( S, process_sat_count, cnf_time_from_node,current_task_index );
-	int solver_type = 1;
 	int core_len = 64;
 	double corevars_activ_type = 1;
 	int sort_type = 0;
@@ -607,10 +584,10 @@ void TestSolve()
 //---------------------------------------------------------
 void TestDeepPredict( )
 {
-	cout << "*** DEBUG MODE" << endl;
+	std::cout << "*** DEBUG MODE" << std::endl;
 	MPI_Predicter mpi_p;
 
-	vector<unsigned> rand_arr; 
+	std::vector<unsigned> rand_arr; 
 	unsigned rand_arr_len = 192; 
 	unsigned max_rand_val = 56;
 
@@ -627,7 +604,7 @@ void TestDeepPredict( )
 	mpi_p.part_mask[0] = 3;
 	mpi_p.part_mask[1] = 4846842;
 	mpi_p.part_mask[2] = 315856;
-	vector< vector<unsigned> > values_arr;
+	std::vector< std::vector<unsigned> > values_arr;
 
 	mpi_p.GetInitPoint();
 	values_arr.resize(10);
@@ -644,7 +621,7 @@ void TestDeepPredict( )
 		ua.center.set(i);
 	mpi_p.L2.push_back( ua );
 	//boost::dynamic_bitset<> bs = IntVecToBitset( mpi_p.core_len, mpi_p.var_choose_order );
-	stringstream sstream;
+	std::stringstream sstream;
 	//mpi_p.AddNewUncheckedArea( bs, sstream );
 	//mpi_p.current_unchecked_area.center = bs;
 	mpi_p.cur_vars_changing = 1;

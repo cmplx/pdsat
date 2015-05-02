@@ -15,9 +15,9 @@ const int    NUM_KEY_BITS                  = 64;
 MPI_Base :: MPI_Base( ) :
 	sat_count            ( 0 ),
 	corecount			 ( 0 ),
-	solver_type          ( 4 ),
+	solver_name          ( "" ),
 	core_len             ( 0 ),
-	koef_val             ( 8 ),
+	koef_val             ( 4 ),
 	schema_type          ( "" ),
 	var_count            ( 0 ),
 	clause_count         ( 0 ),
@@ -33,25 +33,28 @@ MPI_Base :: MPI_Base( ) :
 	PB_mode				 ( 1 ),
 	best_lower_bound	 ( -1 ),
 	upper_bound          ( -1 ),
+	cnf_in_set_count     ( 100 ),
 	verbosity			 ( 0 ),
 	check_every_conflict ( 2000 ),
 	known_point_file_name ( "known_point" ),
-	known_assumptions_file_name ( "known_assumptions_0" ),
-	base_known_assumptions_file_name ( "known_assumptions" ),
 	IsSolveAll           ( false ),
-	IsPredict            ( false ),
+	isPredict            ( false ),
 	max_solving_time     ( 0 ),
 	max_nof_restarts     ( 0 ),
 	keybit_count         ( 4 ),
 	rslos_table_name     ( "" ),
-	assumptions_count    ( 0 ),
 	activity_vec_len	 ( 0 ),
 	first_stream_var_index ( 0 ),
 	te ( 0 ),
 	er ( 1 ),
 	penalty ( 0.5 ),
 	known_last_bits ( 0 ),
-	keystream_len ( 200 )
+	keystream_len ( 200 ),
+	isMakeSatSampleAnyWay ( false ),
+	input_var_num ( 0 ),
+	isSolverSystemCalling ( false ),
+	process_sat_count ( 0 ),
+	known_vars_count ( 0 )
 {
 	full_mask  = new unsigned[FULL_MASK_LEN];
 	part_mask  = new unsigned[FULL_MASK_LEN];
@@ -71,15 +74,15 @@ MPI_Base :: ~MPI_Base( )
 
 // Make full_mask and part_mask for sending from order that is set by var choose array
 //---------------------------------------------------------
-bool MPI_Base :: GetMainMasksFromVarChoose( vector<int> &var_choose_order )
+bool MPI_Base :: GetMainMasksFromVarChoose( std::vector<int> &var_choose_order )
 {
 	if ( verbosity > 0 ) {
-		cout << endl << "GetMainMasksFromVarChoose() start with var_choose_order " << endl;
+		std::cout << std::endl << "GetMainMasksFromVarChoose() start with var_choose_order " << std::endl;
 		for ( unsigned i = 0; i < var_choose_order.size(); i++ )
-			cout << var_choose_order[i] << " ";
-		cout << endl;
-		cout << "part_mask_var_count " << part_mask_var_count << endl;
-		cout << endl;
+			std::cout << var_choose_order[i] << " ";
+		std::cout << std::endl;
+		std::cout << "part_mask_var_count " << part_mask_var_count << std::endl;
+		std::cout << std::endl;
 	}
 
 	// init masks every launch
@@ -90,57 +93,45 @@ bool MPI_Base :: GetMainMasksFromVarChoose( vector<int> &var_choose_order )
 	for ( unsigned i = 0; i < var_choose_order.size(); ++i ) {
 		var_index = var_choose_order[i] - 1;
 		cur_uint_ind = var_index / UINT_LEN;
-		full_mask[cur_uint_ind + 1] += 1 << ( var_index % UINT_LEN );
+		full_mask[cur_uint_ind] += 1 << ( var_index % UINT_LEN );
 	}
 
 	// get first full_mask_var_count vars from  array var_choose_order
 	for ( unsigned i = 0; i < part_mask_var_count; ++i ) {
 		var_index = var_choose_order[i] - 1;
 		cur_uint_ind = var_index / UINT_LEN;
-		part_mask[cur_uint_ind + 1] += 1 << ( var_index % UINT_LEN );
-	}
-
-	// full_mask[0] is mask of existing all 32 uint values
-	for ( unsigned i = 1; i < FULL_MASK_LEN; ++i ) // fill full_mask[0]
-		if ( full_mask[i] ) full_mask[0] += 1 << ( i-1 );
-	
-	for ( unsigned i = 1; i < FULL_MASK_LEN; ++i ) // fill part_mask[0]
-		if ( part_mask[i] ) part_mask[0] += 1 << ( i-1 );
-
-	if ( ( !full_mask[0] ) && ( full_mask_var_count != 0 ) ) {
-		cout << "Error. full_mask[0] == 0. full_mask_var_count != 0";
-		return false;
+		part_mask[cur_uint_ind] += 1 << ( var_index % UINT_LEN );
 	}
 	
 	if ( verbosity > 1 ) {
-		cout << "made part_mask" << endl;
+		std::cout << "made part_mask" << std::endl;
 		for( unsigned i = 0; i < FULL_MASK_LEN; ++i )
-			cout << part_mask[i] << " ";
-		cout << endl;
+			std::cout << part_mask[i] << " ";
+		std::cout << std::endl;
 		unsigned bit_count = 0;
-		for ( unsigned j=1; j < FULL_MASK_LEN; ++j )
+		for ( unsigned j=0; j < FULL_MASK_LEN; ++j )
 			bit_count += BitCount( part_mask[j] );
-		cout << "part_mask bit_count " << bit_count << endl;
+		std::cout << "part_mask bit_count " << bit_count << std::endl;
 	}
 	
 	if ( verbosity > 1 )
-		cout << "GetMainMasksFromVarChoose() end" << endl;
+		std::cout << "GetMainMasksFromVarChoose() end" << std::endl;
 	
 	return true;
 }
-
+/*
 bool MPI_Base :: MakeAssignsFromFile( int current_task_index, unsigned long long before_binary_length, vec< vec<Lit> > &dummy_vec )
 {
 	if ( verbosity > 0 )
-		cout << "MakeAssignsFromFile()" << endl;
+		std::cout << "MakeAssignsFromFile()" << std::endl;
 
 	if ( current_task_index < 0 ) {
-		cerr << "current_task_index < 0" << endl;
+		std::cerr << "current_task_index < 0" << std::endl;
 		return false;
 	}
 	
 	if ( var_choose_order.size() == 0 ) {
-		cerr << "var_choose_order.size() == 0 " << endl;
+		std::cerr << "var_choose_order.size() == 0 " << std::endl;
 		return false;
 	}
 	
@@ -154,7 +145,7 @@ bool MPI_Base :: MakeAssignsFromFile( int current_task_index, unsigned long long
 
 	unsigned max_int = (1 << 31);
 	if ( cur_batch_size > (unsigned long long)max_int ) {
-		cerr << "cur_batch_size > (unsigned long long)max_int" << endl;
+		std::cerr << "cur_batch_size > (unsigned long long)max_int" << std::endl;
 		return false;
 	}
 	// skip unuseful strings
@@ -164,29 +155,23 @@ bool MPI_Base :: MakeAssignsFromFile( int current_task_index, unsigned long long
 	else
 		previous_problems_count += batch_addit_size_count;
 	
-	string str, str1;
-	ifstream ifile( known_assumptions_file_name.c_str(), ios_base :: in | ios_base :: binary );
-	if ( !ifile.is_open() ) {
-		cerr << "Error. !in.is_open(). file name " << known_assumptions_file_name << endl;
-		return false;
-	}
-	//cout << "before_binary_length " << before_binary_length << endl;
+	std::string str, str1;
+	//cout << "before_binary_length " << before_binary_length << std::endl;
 	ifile.seekg( before_binary_length, ifile.beg ); // skip some bytes
 	
 	char *cc = new char[3];
 	cc[2] = '\0';
 	ifile.read(cc,2);
-	stringstream sstream;
+	std::stringstream sstream;
 	unsigned header_value;
 	sstream << cc;
 	sstream >> header_value;
-	//cout << "header_value " << header_value << endl;
 	delete[] cc;
 	//ifile >> header_value; // read header in text mode
 	if ( header_value != var_choose_order.size() ) {
-		cerr << "header_value != var_choose_order.size()" << endl;
-		cerr << header_value << " != " << var_choose_order.size() << endl;
-		cerr << "cc " << cc << endl;
+		std::cerr << "header_value != var_choose_order.size()" << std::endl;
+		std::cerr << header_value << " != " << var_choose_order.size() << std::endl;
+		std::cerr << "cc " << cc << std::endl;
 		return false;
 	}
 	
@@ -197,33 +182,32 @@ bool MPI_Base :: MakeAssignsFromFile( int current_task_index, unsigned long long
 	int cur_var_ind;
 	unsigned long long ul;
 	unsigned long long byte_count = before_binary_length + 2 + sizeof(ul)*previous_problems_count;
-	stringstream sstream_info;
-	sstream_info << "current_task_index "      << current_task_index << endl;
-	sstream_info << "all_tasks_count "         << all_tasks_count << endl;
-	sstream_info << "previous_problems_count " << previous_problems_count << endl;
-	sstream_info << "assumptions_count "       << assumptions_count << endl;
-	sstream_info << "basic_batch_size "        << basic_batch_size  << endl;
-	sstream_info << "cur_batch_size "          << cur_batch_size << endl;
-	sstream_info << "byte_count "              << byte_count << endl;
+	std::stringstream sstream_info;
+	sstream_info << "current_task_index "      << current_task_index << std::endl;
+	sstream_info << "all_tasks_count "         << all_tasks_count << std::endl;
+	sstream_info << "previous_problems_count " << previous_problems_count << std::endl;
+	sstream_info << "basic_batch_size "        << basic_batch_size  << std::endl;
+	sstream_info << "cur_batch_size "          << cur_batch_size << std::endl;
+	sstream_info << "byte_count "              << byte_count << std::endl;
 	if ( verbosity > 0 )
-		cout << sstream_info.str() << endl;
+		std::cout << sstream_info.str() << std::endl;
 	ifile.clear();
 	ifile.seekg( byte_count, ifile.beg ); // skip some bytes
 	if ( ifile.fail() || ifile.eof() ) {
-		cerr << "Error. ifile.fail() || ifile.eof()" << endl;
-		cerr << sstream_info.str();
+		std::cerr << "Error. ifile.fail() || ifile.eof()" << std::endl;
+		std::cerr << sstream_info.str();
 		return false;
 	}
 	for ( unsigned i=0; i < (unsigned)cur_batch_size; ++i ) {
 		if ( !(ifile.read( (char*)&ul, sizeof(ul) ) ) ) {
-			cerr << "Error. !ifile.read( (char*)&ul, sizeof(ul) )" << endl;
-			cerr << sstream_info.str();
+			std::cerr << "Error. !ifile.read( (char*)&ul, sizeof(ul) )" << std::endl;
+			std::cerr << sstream_info.str();
 			return false;
 		}
 		UllongToBitset( ul, d_bitset );
 		if ( d_bitset.size() != var_choose_order.size() ) {
-			cerr << "d_bitset.size() != var_choose_order.size()" << endl;
-			cerr << d_bitset.size() << " != " << var_choose_order.size() << endl;
+			std::cerr << "d_bitset.size() != var_choose_order.size()" << std::endl;
+			std::cerr << d_bitset.size() << " != " << var_choose_order.size() << std::endl;
 			return false;
 		}
 		for ( unsigned j=0; j < var_choose_order.size(); ++j ) {
@@ -236,7 +220,7 @@ bool MPI_Base :: MakeAssignsFromFile( int current_task_index, unsigned long long
 	}
 	ifile.close();
 	return true;
-}
+}*/
 
 bool MPI_Base :: MakeAssignsFromMasks( unsigned *full_mask, 
 									   unsigned *part_mask, 
@@ -246,7 +230,7 @@ bool MPI_Base :: MakeAssignsFromMasks( unsigned *full_mask,
 // for predict with minisat2.2. convert masks to vector of Literals
 	unsigned variate_vars_count = 0;
 	full_mask_var_count = 0;
-	for ( unsigned i = 1; i < FULL_MASK_LEN; i++ ) {
+	for ( unsigned i = 0; i < FULL_MASK_LEN; i++ ) {
 		variate_vars_count  += BitCount( full_mask[i] ^ part_mask[i] );
 		full_mask_var_count += BitCount( full_mask[i] );
 	}
@@ -267,10 +251,10 @@ bool MPI_Base :: MakeAssignsFromMasks( unsigned *full_mask,
 		range_mask = 1;
 		range_mask_ind = 1;
 		index = 0;
-		for ( unsigned i = 1; i < FULL_MASK_LEN; i++ ) {
+		for ( unsigned i = 0; i < FULL_MASK_LEN; i++ ) {
 			for ( unsigned j = 0; j < UINT_LEN; j++ ) {
 				mask = ( 1 << j );
-				cur_var_ind = ( i-1 ) * UINT_LEN + j;
+				cur_var_ind = i * UINT_LEN + j;
 				IsAddingLiteral = false;
 				if ( part_mask[i] & mask ) { // one common vector send by control process
 					IsPositiveLiteral = ( mask_value[i] & mask ) ? true : false;
@@ -300,7 +284,7 @@ bool MPI_Base :: GetValuesFromVarChoose( unsigned &part_var_power )
 	unsigned mask2;
 	for( unsigned lint = 0; lint < part_var_power; lint++ ) {
 		value_index = 0;
-		for( unsigned i = 1; i < FULL_MASK_LEN; i++ ) {
+		for( unsigned i = 0; i < FULL_MASK_LEN; i++ ) {
 			for( unsigned j = 0; j < UINT_LEN; j++ ) {
 				mask  = ( 1 << j );
 				mask2 = 1 << value_index;
@@ -313,14 +297,6 @@ bool MPI_Base :: GetValuesFromVarChoose( unsigned &part_var_power )
 		}
 	} // for( lint = 0; lint < part_var_power; lint++ )
 
-	// set values_arr[lint][0] and values_arr[lint][i]
-	for( unsigned lint = 0; lint < part_var_power; lint++ ) {
-		for( unsigned i = 1; i < FULL_MASK_LEN; i++ ) { // fill part_mask[0]
-			if ( values_arr[lint][i] )
-				values_arr[lint][0] += 1 << ( i-1 );
-		}
-	}
-
 	return true;
 }
 
@@ -328,16 +304,16 @@ bool MPI_Base :: GetValuesFromVarChoose( unsigned &part_var_power )
 bool MPI_Base :: MakeStandardMasks( unsigned &part_var_power )
 {		
 	if ( !GetMainMasksFromVarChoose( var_choose_order ) ) { 
-		cout << "Error in GetMainMasksFromVarChoose" << endl; 
+		std::cout << "Error in GetMainMasksFromVarChoose" << std::endl; 
 		return false;
 	}
-	cout << "Correct end of GetMasksFromVarChoose" << endl;
+	std::cout << "Correct end of GetMasksFromVarChoose" << std::endl;
 		
 	if ( !GetValuesFromVarChoose( part_var_power ) ) { 
-		cout << "Error in GetValuesFromVarChoose" << endl; 
+		std::cout << "Error in GetValuesFromVarChoose" << std::endl; 
 		return false; 
 	}
-	cout << "Correct end of GetValuesFromVarChoose" << endl;
+	std::cout << "Correct end of GetValuesFromVarChoose" << std::endl;
 	
 	return true;
 }
@@ -346,12 +322,18 @@ bool MPI_Base :: MakeStandardMasks( unsigned &part_var_power )
 bool MPI_Base :: MakeVarChoose( )
 {
 // Make array var_choose_order with vars sorted by given rule
-	string str;
-	stringstream sstream;
+	std::string str;
+	std::stringstream sstream;
 	int val;
+
+	std::cout << "start MakeVarChoose()" << std::endl;
+	std::cout << "var_choose_order" << std::endl;
+	for ( unsigned i = 0; i < var_choose_order.size(); i++ )
+		std::cout << var_choose_order[i] << " ";
+	std::cout << std::endl;
 	
 	// if file with decomposition set exists
-	ifstream known_point_file( known_point_file_name.c_str() );
+	std::ifstream known_point_file( known_point_file_name.c_str() );
 	if ( known_point_file.is_open() ) {
 		getline( known_point_file, str );
 		sstream << str;
@@ -364,8 +346,8 @@ bool MPI_Base :: MakeVarChoose( )
 		schema_type = "known_point";
 	}
 	
-	cout << "var_choose_order.size() " << var_choose_order.size() << endl;
-	cout << "full_mask_var_count " << full_mask_var_count << endl;
+	std::cout << "var_choose_order.size() " << var_choose_order.size() << std::endl;
+	std::cout << "full_mask_var_count " << full_mask_var_count << std::endl;
 
 	if ( ( var_choose_order.size() == 0 ) && ( schema_type == "" ) )
 		schema_type = "0";
@@ -412,12 +394,12 @@ bool MPI_Base :: MakeVarChoose( )
 		}
 	}
 
-	cout << "final var_choose_order.size() " << var_choose_order.size() << endl;
+	std::cout << "final var_choose_order.size() " << var_choose_order.size() << std::endl;
 	sort( var_choose_order.begin(), var_choose_order.end() );
-	cout << "var_choose_order" << endl;
+	std::cout << "var_choose_order" << std::endl;
 	for ( unsigned i = 0; i < var_choose_order.size(); i++ )
-		cout << var_choose_order[i] << " ";
-	cout << endl;
+		std::cout << var_choose_order[i] << " ";
+	std::cout << std::endl;
 
 	return true;
 }
@@ -432,14 +414,14 @@ bool MPI_Base :: ReadVarCount( )
 				 current_var_count = 0,
 				 i = 0, k = 0,
 				 lit_positiv_val = 0;
-	string line_str, word_str;
+	std::string line_str, word_str;
 	bool IsUncorrectLine = false;
 	
 	// check file with main CNF
-	ifstream main_cnf( input_cnf_name, ios::in );
+	std::ifstream main_cnf( input_cnf_name.c_str(), std::ios::in );
     if ( !main_cnf ) {
-		std :: cerr << endl << "Error in opening of file with input CNF " 
-			        << input_cnf_name << endl;
+		std :: cerr << std::endl << "Error in opening of file with input CNF " 
+			        << input_cnf_name << std::endl;
 		return false;
 	}
 
@@ -463,7 +445,7 @@ bool MPI_Base :: ReadVarCount( )
 						k++;
 						if ( k == line_str.length( ) ) { // skip empty or uncorrect line
 							/*std :: cout << "\n***In ReadVarCount skipped line " << 
-								           line_str << endl;*/
+								           line_str << std::endl;*/
 							IsUncorrectLine = true;
 							break;
 						}
@@ -494,7 +476,7 @@ bool MPI_Base :: ReadVarCount( )
 
 	main_cnf.close( ); // reopen file
 	main_cnf.clear( );
-	main_cnf.open( input_cnf_name );
+	main_cnf.open( input_cnf_name.c_str() );
 	current_clause_count = 0;
 
 	// step 2 - get arrays of lengths
@@ -517,7 +499,7 @@ bool MPI_Base :: ReadVarCount( )
 						k++;
 						if ( k == line_str.length( ) ) { // skip empty or uncorrect line
 							/*std :: cout << "\n***In ReadVarCount skipped line " << 
-								           line_str << endl;*/
+								           line_str << std::endl;*/
 							IsUncorrectLine = true;
 							break;
 						}
@@ -562,19 +544,18 @@ bool MPI_Base :: ReadIntCNF()
 				 k                    = 0, 
 				 val				  = 0,
 				 sign				  = 0;
-	unsigned input_var_num,
-			 first_obj_var;
+	unsigned first_obj_var;
 	int lit_val;
-	string line_str, 
+	std::string line_str, 
 		   word_str;
 	bool IncorrectLine;
-	vector<int> :: iterator vec_it;
+	std::vector<int> :: iterator vec_it;
 
 	if ( !ReadVarCount( ) ) {
-		cerr << "Error in ReadVarCount" << endl; return false;
+		std::cerr << "Error in ReadVarCount" << std::endl; return false;
 	}
 
-	cout << "ReadVarCount() done" << endl;
+	std::cout << "ReadVarCount() done" << std::endl;
 
 	clause_array.resize( clause_count );
 
@@ -582,18 +563,18 @@ bool MPI_Base :: ReadIntCNF()
 		clause_array[i].resize( clause_lengths[i] );
 
 	// check file with main CNF
-	ifstream main_cnf( input_cnf_name, ios::in );
-    if ( !main_cnf ) {
-		cerr << "Error in opening of file with input CNF with name" 
-			 << input_cnf_name << endl;
-		return false;
+	std::ifstream main_cnf( input_cnf_name.c_str(), std::ios::in );
+    if ( !main_cnf.is_open() ) {
+		std::cerr << "Error in opening of file with input CNF with name" 
+			 << input_cnf_name << std::endl;
+		exit(1);
 	}
 	
 	first_obj_var = 0;
 	current_clause_count = 0;
 
-	stringstream sstream;
-	string str1, str2, str3, str4;
+	std::stringstream sstream;
+	std::string str1, str2, str3, str4;
 	bool Is_InpVar = false, Is_ConstrLen = false, Is_ObjLen = false, Is_ObjVars = false;
 	while ( getline( main_cnf, line_str ) ) {
 		if ( line_str[0] == 'p' )
@@ -606,11 +587,11 @@ bool MPI_Base :: ReadIntCNF()
 			/*if ( str2 == "rslos" ) {
 				while ( sstream >> intval )
 					rslos_lengths.push_back( intval );
-				cout << "rslos_count " << rslos_lengths.size() << endl;
+				cout << "rslos_count " << rslos_lengths.size() << std::endl;
 				cout << "rslos lens: ";
 				for ( unsigned i = 0; i < rslos_lengths.size(); i++ )
 					cout << rslos_lengths[i] << " ";
-				cout << endl;
+				cout << std::endl;
 				
 				continue;
 			}*/
@@ -619,25 +600,25 @@ bool MPI_Base :: ReadIntCNF()
 			sstream.str( "" ); sstream.clear( );
 			
 			if ( str2 == "known_last_bits" ) {
-				istringstream( str3 ) >> known_last_bits;
-				cout << "known_last_bits " << known_last_bits << endl;
+				std::istringstream( str3 ) >> known_last_bits;
+				std::cout << "known_last_bits " << known_last_bits << std::endl;
 				continue;
 			}
 			
-			if ( str2 == "keystream_len" ) {
-				istringstream( str3 ) >> keystream_len;
-				cout << "keystream_len " << keystream_len << endl;
+			if ( ( str2 == "output" ) && ( str3 == "variables" ) ) {
+				std::istringstream( str4 ) >> keystream_len;
 				continue;
 			}
 			
 			if ( ( !Is_InpVar ) && ( str2 == "input" ) && ( str3 == "variables" ) ) {
-				istringstream( str4 ) >> input_var_num;
+				std::istringstream( str4 ) >> input_var_num;
 				if ( input_var_num > 0 ) {
-				    core_len = input_var_num;
+				    if ( !core_len )
+						core_len = input_var_num; // if core_len didn't set manually, read from file
 				    if ( (core_len > MAX_CORE_LEN) || (core_len <= 0) ) {
 						core_len = MAX_CORE_LEN;
-						cout << "Warning. core_len > MAX_CORE_LEN or <= 0. Changed to MAX_CORE_LEN" << endl;
-						cout << "core_len " << core_len << " MAX_CORE_LEN " << MAX_CORE_LEN << endl;
+						std::cout << "Warning. core_len > MAX_CORE_LEN or <= 0. Changed to MAX_CORE_LEN" << std::endl;
+						std::cout << "core_len " << core_len << " MAX_CORE_LEN " << MAX_CORE_LEN << std::endl;
 				    }
 					for ( unsigned i=0; i < core_len; ++i )
 						full_var_choose_order.push_back( i+1 );
@@ -645,46 +626,47 @@ bool MPI_Base :: ReadIntCNF()
 				    continue;
 				}
 			}
+
 			if ( str2 == "var_set" ) {
 				sstream << line_str;
-				cout << "line_str " << line_str << endl;
+				std::cout << "line_str " << line_str << std::endl;
 				sstream >> str1; // remove "c"
 				sstream >> str2; // remove "var_set"
 				while ( sstream >> val ) {
-					cout << val << " ";
+					std::cout << val << " ";
 					full_var_choose_order.push_back( val );
 				}
-				cout << endl;
+				std::cout << std::endl;
 				sstream.clear(); sstream.str();
 				sort( full_var_choose_order.begin(), full_var_choose_order.end() );
-				cout << "After reading var_set" << endl;
-				cout << "var_choose_order.size() " << full_var_choose_order.size() << endl;
+				std::cout << "After reading var_set" << std::endl;
+				std::cout << "var_choose_order.size() " << full_var_choose_order.size() << std::endl;
 				for ( unsigned i=0; i < full_var_choose_order.size(); ++i )
-					cout << full_var_choose_order[i] << " ";
-				cout << endl;
+					std::cout << full_var_choose_order[i] << " ";
+				std::cout << std::endl;
 				core_len = full_var_choose_order.size();
-				cout << "core_len changed to " << core_len << endl;
+				std::cout << "core_len changed to " << core_len << std::endl;
 			}
 			
 			if ( !Is_ConstrLen ) {
 				if ( ( str2 == "constraint" ) && ( str3 == "clauses" ) ) {
-					istringstream( str4 ) >> constr_clauses_count; 
+					std::istringstream( str4 ) >> constr_clauses_count; 
 					Is_ConstrLen = true;
 					continue;
 				}
 			}
 			if ( !Is_ObjLen ) {
 				if ( ( ( str2 == "object" ) || ( str2 == "obj" ) ) && ( str3 == "clauses" ) ) {
-					istringstream( str4 ) >> obj_clauses_count;
+					std::istringstream( str4 ) >> obj_clauses_count;
 					Is_ObjLen = true;
 					continue;
 				}
 			}
 			if ( !Is_ObjVars ) {
 				if ( ( str2 == "obj" ) && ( str3 == "vars" ) ) 
-					istringstream( str4 ) >> first_obj_var;
+					std::istringstream( str4 ) >> first_obj_var;
 				else if ( ( str2 == "object" ) && ( str3 == "variables" ) ) 
-					istringstream( str4 ) >> first_obj_var;
+					std::istringstream( str4 ) >> first_obj_var;
 				if ( first_obj_var > 0 ) {
 					if ( !Is_ConstrLen ) constr_clauses_count = clause_count;
 
@@ -706,7 +688,7 @@ bool MPI_Base :: ReadIntCNF()
 								obj_vars_count++;
 							}
 							else
-								cerr << "String c obj vars ... contains too many values ";
+								std::cerr << "String c obj vars ... contains too many values ";
 						}
 					}
 					Is_ObjVars = true;
@@ -717,7 +699,7 @@ bool MPI_Base :: ReadIntCNF()
 		else // if ( ( line_str[0] != 'p' ) && ( line_str[0] != 'c' ) )
 		{
 			// try to read line with clause
-			current_lit_count = 0; // cuttenr count of lits in current clause
+			current_lit_count = 0; // current count of lits in current clause
 			line_str = " " + line_str;
 			for ( unsigned i = 0; i < line_str.length( ) - 1; i++ ) {
 				IncorrectLine = false;
@@ -731,7 +713,7 @@ bool MPI_Base :: ReadIntCNF()
 						k++;
 						if ( k == line_str.length( ) ) { // skip empty or uncorrect line
 							/*std :: cout << "\n***In ReadVarCount skipped line " << 
-								           line_str << endl;*/
+								           line_str << std::endl;*/
 							IncorrectLine = true;
 							break;
 						}
@@ -742,7 +724,7 @@ bool MPI_Base :: ReadIntCNF()
 
 					lit_val = atoi( word_str.c_str( ) ); // word -> lit value
 					if ( !lit_val ) { // if non-number or '0' (lit > 0) then rerurn error;
-						cout << "\n Error in ReadIntCNF. literal " << word_str << " is non-number";
+						std::cout << "\n Error in ReadIntCNF. literal " << word_str << " is non-number";
 						return false;
 					}
 					else if ( lit_val < 0 ) {
@@ -760,9 +742,12 @@ bool MPI_Base :: ReadIntCNF()
 			} // for ( i = 0; i < line_str.length( ) - 1; i++ )
 			
 			if ( ( te > 0 ) && ( current_lit_count == 1 ) ) {
-				cerr << "( te > 0 ) && ( current_lit_count == 1 ). change CNF file to template one" << endl;
+				std::cerr << "( te > 0 ) && ( current_lit_count == 1 ). change CNF file to template one" << std::endl;
 				exit(1);
 			}
+
+			if ( current_lit_count == 1 )
+				known_vars_count++;
 			
 			if ( current_lit_count )
 				current_clause_count++;
@@ -786,27 +771,36 @@ bool MPI_Base :: ReadIntCNF()
 	main_cnf.close( );
 	
 	// fill indexes of core variables
-	k=0;
+	/*k=0;
 	for ( vec_it = full_var_choose_order.begin(); vec_it != full_var_choose_order.end(); ++vec_it )
-		core_var_indexes.insert(pair<int,unsigned>( *vec_it, k++ ));
+		core_var_indexes.insert(std::pair<int,unsigned>( *vec_it, k++ ));
 	if ( verbosity > 0 ) {
-		cout << "core_var_indexes" << endl;
-		for ( map<int,unsigned> :: iterator map_it = core_var_indexes.begin(); map_it != core_var_indexes.end(); ++map_it )
-			cout << map_it->first << " " << map_it->second << endl;
-	}
+		std::cout << "core_var_indexes" << std::endl;
+		for ( std::map<int,unsigned> :: iterator map_it = core_var_indexes.begin(); map_it != core_var_indexes.end(); ++map_it )
+			std::cout << map_it->first << " " << map_it->second << std::endl;
+	}*/
 
 	if ( known_last_bits ) {
+		if ( core_len != input_var_num ) {
+			std::cerr << "known_last_bits " << known_last_bits << " with core_len != input_var_num" << std::endl;
+			exit(1);
+		}
 		core_len -= known_last_bits;
-		cout << "new core_len (less to known_last_bits) " << core_len << endl;
+		std::cout << "new core_len (less to known_last_bits) " << core_len << std::endl;
 	}
 	
-	cout << "ReadIntCNF() done" << endl;
+	if ( ( isPredict ) && ( !input_var_num ) ) {
+		std::cerr << "input_var_num == 0 in predict mode" << std::endl;
+		return false;
+	}
+	
+	std::cout << "ReadIntCNF() done" << std::endl;
 	
 	return true;
 }
 
 //---------------------------------------------------------
-bool MPI_Base :: CheckSATset( vector<int> &lit_SAT_set_array )
+bool MPI_Base :: CheckSATset( std::vector<int> &lit_SAT_set_array )
 {
 // Check given SAT set
 	int cnf_sat_val = 1,
@@ -844,7 +838,7 @@ bool MPI_Base :: CheckSATset( vector<int> &lit_SAT_set_array )
 }
 
 //---------------------------------------------------------
-bool MPI_Base :: AnalyzeSATset( )
+bool MPI_Base :: AnalyzeSATset( double cnf_time_from_node )
 {
 // Reading of SAT set and check it for correction
 	int lits_num = 0,
@@ -854,28 +848,28 @@ bool MPI_Base :: AnalyzeSATset( )
 		str_output_cur_ind = 0;
 	unsigned answer_var_count;
 	bool bIsSATSetExist = false;
-	string answer_file_name,
+	std::string answer_file_name,
 		   output_file_name = "output",
 		   str_answer,
 		   line_buffer;
-	ofstream answer_file,
+	std::ofstream answer_file,
 			 output_file;
-	vector<int> lit_SAT_set_array;
-	stringstream sstream;
+	std::vector<int> lit_SAT_set_array;
+	std::stringstream sstream;
 	
-	cout << "Start of AnalyzeSATset" << endl;
+	std::cout << "Start of AnalyzeSATset" << std::endl;
 	lit_SAT_set_array.resize( b_SAT_set_array.size() );
 	for ( unsigned i = 0; i < lit_SAT_set_array.size(); ++i )
 		lit_SAT_set_array[i] = ( ( i + 1 ) << 1 ) + (b_SAT_set_array[i] ? 0 : 1);
 	// if SAT set exist then check it
 	if ( verbosity > 0 )
-		cout << "Before CheckSATset()" << endl;
+		std::cout << "Before CheckSATset()" << std::endl;
 	if ( !CheckSATset( lit_SAT_set_array ) ) {
-		cerr << "Error in checking of SAT set" << endl;
+		std::cerr << "Error in checking of SAT set" << std::endl;
 		return false;
 	}
 	if ( verbosity > 0 )
-		cout << "CheckSATset() done" << endl;
+		std::cout << "CheckSATset() done" << std::endl;
 	
 	// open file for writing of answer in zchaff style
 	answer_file_name = "sat_sets_";
@@ -884,8 +878,7 @@ bool MPI_Base :: AnalyzeSATset( )
 	unsigned k = 1;
 	for( unsigned i = 1; i < answer_file_name.length( ); ++i ) {
 		if ( ( answer_file_name[i] == '.' ) || ( answer_file_name[i] == '\\' ) || 
-			 ( answer_file_name[i] == '/' ) || ( answer_file_name[i] == '//' ) ||
-			 ( answer_file_name[i] == ':' ) || 
+			 ( answer_file_name[i] == '/' ) || ( answer_file_name[i] == ':' )  || 
 			 ( ( answer_file_name[i] == '_' ) && ( answer_file_name[i - 1] == '_' ) ) )
 			continue;
 		else {
@@ -898,20 +891,20 @@ bool MPI_Base :: AnalyzeSATset( )
 	answer_file_name += sstream.str();
 	sstream.clear(); sstream.str("");
 
-	cout << "answer_file_name " << answer_file_name << endl; 
-	answer_file.open( answer_file_name.c_str( ), ios :: app );
+	std::cout << "answer_file_name " << answer_file_name << std::endl; 
+	answer_file.open( answer_file_name.c_str( ), std::ios::app );
 	if ( !( answer_file.is_open( ) ) ) {
 		std :: cerr << "Error in opening of file with answer in zchaff style " 
-			        << answer_file_name << endl;
+			        << answer_file_name << std::endl;
 		return false;
 	}
 	
 	answer_var_count = core_len;
 	
-	sstream << "SAT" << endl;
+	sstream << cnf_time_from_node << " s SAT " << std::endl;
 	for ( unsigned i = 0; i < b_SAT_set_array.size(); ++i )
 		sstream << b_SAT_set_array[i];
-	sstream << endl; 
+	sstream << std::endl; 
 	answer_file << sstream.rdbuf( );
 	answer_file.close( );
 	lit_SAT_set_array.clear();
@@ -919,11 +912,11 @@ bool MPI_Base :: AnalyzeSATset( )
 	return true;
 }
 
-void MPI_Base :: MakeRandArr( vector< vector<unsigned> > &rand_arr, unsigned vec_len, unsigned rnd_uint32_count )
+void MPI_Base :: MakeRandArr( std::vector< std::vector<unsigned> > &rand_arr, unsigned vec_len, unsigned rnd_uint32_count )
 {
 // make array of pseudorandom values using Mersenne Twister generator
 	rand_arr.resize( vec_len );
-	vector< vector<unsigned> > :: iterator it;
+	std::vector< std::vector<unsigned> > :: iterator it;
 	for ( it = rand_arr.begin(); it != rand_arr.end(); it++ ) {
 		(*it).resize( rnd_uint32_count );
 		for ( unsigned j = 0; j < (*it).size(); j++ )
@@ -931,7 +924,7 @@ void MPI_Base :: MakeRandArr( vector< vector<unsigned> > &rand_arr, unsigned vec
 	}
 }
 
-void MPI_Base :: MakeUniqueRandArr( vector<unsigned> &rand_arr, unsigned rand_arr_len, 
+void MPI_Base :: MakeUniqueRandArr( std::vector<unsigned> &rand_arr, unsigned rand_arr_len, 
 							        unsigned max_rand_val )
 {
 // make array of different pseudorandom values
@@ -955,4 +948,177 @@ void MPI_Base :: MakeUniqueRandArr( vector<unsigned> &rand_arr, unsigned rand_ar
 		} while ( IsOldValue );
 		rand_arr[i] = rand_numb; // new values
 	}
+}
+
+
+void MPI_Base :: MakeSatSample( std::vector< std::vector<bool> > &state_vec_vec, std::vector< std::vector<bool> > &stream_vec_vec )
+{
+	std::fstream file( "known_sat_sample", std::ios_base::in );
+	std::vector<bool> state_vec, stream_vec;
+	std::string str;
+	std::stringstream sstream;
+	getline( file, str );
+	
+	if ( ( isMakeSatSampleAnyWay ) || ( str.size() == 0 ) ) { // empty file
+	//if ( file.peek() == fstream::traits_type::eof() ) { // if file is empty
+		// make [sample_size] different pairs <register_state, keystream> via generating secret keys
+		std::cout << "file known_sat_sample is empty. making SAT sample" << std::endl;
+		
+		// generate randomly state of core variables
+		state_vec.resize( input_var_num );
+		for ( unsigned i=0; i < cnf_in_set_count; i++ ) {
+			for ( unsigned j=0; j < input_var_num; j++ )
+				state_vec[j] = bool_rand(gen);
+			state_vec_vec.push_back( state_vec );
+		}
+		
+		// get state of additional variables
+		Problem cnf;
+		Solver *S;
+		Minisat::lbool ret;
+		minisat22_wrapper m22_wrapper;
+		std::ifstream in( input_cnf_name.c_str() );
+		m22_wrapper.parse_DIMACS_to_problem(in, cnf);
+		in.close();
+		S = new Solver();
+		S->addProblem(cnf);
+		vec<Lit> dummy;
+		int cur_var_ind;
+		int state_vec_len = state_vec_vec[0].size();
+		for ( std::vector< std::vector<bool> > :: iterator x = state_vec_vec.begin(); x != state_vec_vec.end(); x++ ) {
+			cur_var_ind = 0;
+			for ( std::vector<bool> :: iterator y = (*x).begin(); y != (*x).end(); y++ ) {
+				dummy.push( (*y) ? mkLit( cur_var_ind ) : ~mkLit( cur_var_ind ) );
+				cur_var_ind++;
+			}
+			ret = S->solveLimited( dummy );
+			if ( ret != l_True ) {
+				std::cerr << "in makeSatSample() ret != l_True" << std::endl;
+				exit(1);
+			}
+			for( int i=state_vec_len; i < S->model.size() - (int)keystream_len; i++ )
+				(*x).push_back( (S->model[i] == l_True) ? true : false );
+			for( int i=S->model.size() - keystream_len; i < S->model.size(); i++ )
+				stream_vec.push_back( (S->model[i] == l_True) ? true : false );
+			stream_vec_vec.push_back( stream_vec );
+			stream_vec.clear();
+			dummy.clear();
+		}
+		sstream << "state" << std::endl;
+		for ( std::vector< std::vector<bool> > :: iterator x = state_vec_vec.begin(); x != state_vec_vec.end(); x++ ) {
+			for ( std::vector<bool> :: iterator y = (*x).begin(); y != (*x).end(); y++ )
+				sstream << *y;
+			sstream << std::endl;
+		}
+		sstream << "stream" << std::endl;
+		for ( std::vector< std::vector<bool> >::iterator x = stream_vec_vec.begin(); x != stream_vec_vec.end(); x++ ) {
+			for ( std::vector<bool>::iterator y = (*x).begin(); y != (*x).end(); y++ )
+				sstream << *y;
+			sstream << std::endl;
+		}
+		file.close(); file.clear();
+		file.open( "known_sat_sample", std::ios_base::out );
+		file << sstream.rdbuf();
+		delete S;
+	}
+	else {
+		std::cout << "reading state and stream from file" << std::endl;
+		bool isState = false, isStream = false;
+		do {
+			if( str == "state" ) {
+				std::cout << "state string found" << std::endl;
+				isState = true;
+			}
+			else if ( str == "stream" ) {
+				std::cout << "stream string found" << std::endl;
+				isState = false;
+				isStream = true;
+			}
+			else {
+				if ( isState ) {
+					for ( unsigned i=0; i < str.size(); i++ )
+						state_vec.push_back( str[i] == '1' ? true : false );
+					state_vec_vec.push_back( state_vec );
+					state_vec.clear();
+				}
+				else if ( isStream ) {
+					for ( unsigned i=0; i < str.size(); i++ )
+						stream_vec.push_back( str[i] == '1' ? true : false );
+					stream_vec_vec.push_back( stream_vec );
+					stream_vec.clear();
+				}
+			}
+		} while( getline( file, str ) );
+		std::cout << "state_vec_vec.size() "  << state_vec_vec.size()  << std::endl;
+		std::cout << "stream_vec_vec.size() " << stream_vec_vec.size() << std::endl;
+	}
+	std::cout << std::endl;
+	file.close();
+}
+
+std::string MPI_Base :: make_solver_launch_str( std::string solver_name, std::string cnf_name, 
+										   double maxtime_solving_time )
+{
+	std::string time_limit_str, result_str;
+	std::stringstream sstream;
+	sstream << max_solving_time;
+	std::string maxtime_seconds_str = sstream.str();
+	sstream.clear(); sstream.str("");
+	// minisat and solvers with same time limit paremeter
+	if ( solver_name.find( "cryptominisat" ) != std::string::npos )
+		time_limit_str = "";
+	else if ( ( solver_name.find( "minisat" ) != std::string::npos ) || 
+		 ( solver_name.find( "Minisat" ) != std::string::npos ) || 
+		 ( solver_name.find( "MiniSat" ) != std::string::npos ) ||
+		 ( solver_name.find( "minigolf" ) != std::string::npos ) ||
+		 ( solver_name.find( "mipisat" ) != std::string::npos ) ||
+		 ( solver_name.find( "minitsat" ) != std::string::npos ) ||
+		 ( solver_name.find( "rokk" ) != std::string::npos ) ||
+		 ( solver_name.find( "sinn" ) != std::string::npos ) ||
+		 ( solver_name.find( "zenn" ) != std::string::npos ) ||
+		 ( solver_name.find( "SWDiA5BY" ) != std::string::npos ) ||
+		 ( solver_name.find( "ClauseSplit" ) != std::string::npos ) 
+		 )
+	{
+		time_limit_str =  "-cpu-lim=";
+	}
+	else if ( ( solver_name.find( "lingeling" ) != std::string::npos ) && 
+		      ( solver_name.find( "plingeling" ) == std::string::npos ) ) {
+		time_limit_str = "-t ";
+	}
+	else {
+		time_limit_str = "";
+		//std::cerr << "Unknown solver in system calling mode: " << solver_name << std::endl;
+		//MPI_Abort( MPI_COMM_WORLD, 0 );
+	}
+	// glucose can't stop in time
+	/*if ( solver_name.find( "glucose" ) != std::string::npos ) {
+		std::cout << "glucose detected" << std::endl;
+		result_str = "-cpu-lim=";
+	}*/
+	/*else if ( solver_name.find( "plingeling" ) != std::string::npos ) {
+		//std::cout << "pingeling detected" << std::endl;
+		result_str = "-nof_threads ";
+		result_str += nof_threads_str;
+		result_str += " -t ";
+	}
+	else if ( solver_name.find( "trengeling" ) != std::string::npos ) {
+		//std::cout << "treengeling detected" << std::endl;
+		//result_str = "-t " + "11" + nof_threads_str;
+
+	if ( solver_name.find( "dimetheus" ) != std::string::npos )
+		result_str += " -formula";
+	}
+	
+	if ( time_limit_str == "" ) {
+		std::cout << "unknown solver detected. using timelimit" << std::endl;
+		result_str = "./timelimit -t " + maxtime_seconds_str + " -T 1 " + "./" + solvers_dir + "/" + solver_name;
+	}*/
+	
+	if ( time_limit_str != "" )
+		result_str = solver_name + " " + time_limit_str + maxtime_seconds_str + " " + cnf_name;
+	else
+		result_str = solver_name + " " + cnf_name;
+	
+	return result_str;
 }

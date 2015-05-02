@@ -35,10 +35,10 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #   include <inttypes.h>
 
 #endif*/
-// new start
 
 #elif _MSC_VER
 
+#define __STDC_LIMIT_MACROS
 #   include <stdint.h>
 
 #else
@@ -47,7 +47,6 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #   include <inttypes.h>
 
 #endif
-// new end
 
 #include <limits.h>
 
